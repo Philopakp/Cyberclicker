@@ -8,9 +8,10 @@
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;800&display=swap" rel="stylesheet">
 <style>
 :root{--acc:#00f0ff;--bg:#05020d;--ink:#cfe9ff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+canvas{touch-action:none}
 html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Orbitron,"Courier New",monospace}
 body{display:flex;flex-direction:column;align-items:center;min-height:100%}
-#stage{line-height:0;border:1px solid var(--acc);box-shadow:0 0 24px var(--acc)}
+#stage{line-height:0;touch-action:none;border:1px solid var(--acc);box-shadow:0 0 24px var(--acc)}
 #dock{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;padding:10px;max-width:760px;font-size:12px}
 #dock button,#dock input[type=text],#dock input[type=password]{background:#0b0620;color:var(--ink);border:1px solid var(--acc);padding:7px 10px;font:inherit;border-radius:2px}
 #dock button{cursor:pointer}#dock button:hover,#dock button:focus-visible{background:var(--acc);color:#000;outline:none}
@@ -42,7 +43,87 @@ class Upgrade {
 const mk = () => [new Upgrade('Nano Node', 15, 0.2, [0, 150, 255]), new Upgrade('AI Driver', 120, 3.0, [190, 70, 255]), new Upgrade('Core Core', 1000, 45.0, [255, 200, 30])];
 const mkA = () => [new Upgrade('Flashcards', 5, 0.1, [80, 255, 160], 1.15), new Upgrade('Textbook', 25, 0.6, [255, 120, 200], 1.18), new Upgrade('Tutor Bot', 90, 2.0, [255, 255, 255], 1.2)];
 let academy = mkA(), tab = false;
-const list = () => tab ? academy : shop;
+const list = () => shop;
+let drawer = false, panelP = 0, mode = 0, topic = 0, qz = null, fb = ['PICK A TOPIC AND ANSWER', [207, 233, 255]], streak = 0, solved = 0, padPrev = {}, padActive = false, pfi = 0, fi = 0;
+const TOPICS = ['ADD', 'SUB', 'MULT', 'FRAC'], REW = [3, 4, 6, 10];
+const TIPS = ['Add the tens first, then the ones.', 'Count up from the smaller number.', 'Skip count: 6, 12, 18, 24...', 'Same bottom? Add tops, keep bottom.'];
+function newQ() {
+  const r = n => floor(random(n)); let q, ans; const fr = topic === 3;
+  if (topic === 0) { const a = r(20) + 1, b = r(20) + 1; q = a + ' + ' + b; ans = '' + (a + b); }
+  else if (topic === 1) { const a = r(20) + 5, b = r(a) + 1; q = a + ' - ' + b; ans = '' + (a - b); }
+  else if (topic === 2) { const a = r(10) + 2, b = r(10) + 2; q = a + ' x ' + b; ans = '' + a * b; }
+  else { const d = [4, 5, 6, 8, 10, 12][r(6)], n1 = r(d - 2) + 1, n2 = r(d - n1 - 1) + 1; q = n1 + '/' + d + ' + ' + n2 + '/' + d; ans = (n1 + n2) + '/' + d; }
+  const num = parseInt(ans), sfx = fr ? '/' + ans.split('/')[1] : '', set = [ans];
+  for (const k of [-3, -2, -1, 1, 2, 3, -10, 10].sort(() => random() - 0.5)) { if (set.length > 3) break; const v = num + k; if (v > (fr ? 0 : -1) && !set.includes(v + sfx)) set.push(v + sfx); }
+  qz = { q, ans, opts: set.sort(() => random() - 0.5) };
+}
+function answer(i) {
+  if (!qz || i >= qz.opts.length) return;
+  if (qz.opts[i] === qz.ans) {
+    streak++; solved++; const r = REW[topic] + min(streak, 5) * 2; cr += r;
+    fb = ['CORRECT  +' + r + ' CR', [80, 255, 160]]; floatText('+' + r, V - 125, 112, [80, 255, 160]); burst(V - 125, 112, 14, [80, 255, 160]); shake = 4;
+  } else { streak = 0; fb = [qz.q + ' = ' + qz.ans, [255, 90, 120]]; shake = 2; }
+  newQ();
+}
+function toggleDrawer() { if (scene !== 'PLAY') return; drawer = !drawer; pfi = mode === 0 ? 7 : 3; }
+function targets() {
+  const px = V - 250 * panelP, t = [];
+  t.push({ x: px + 218, y: 8, w: 24, h: 22, lbl: 'X', go: () => { drawer = false; } });
+  ['PRACTICE', 'COURSES'].forEach((n, i) => t.push({ x: px + 10 + i * 120, y: 36, w: 114, h: 24, lbl: n, on: mode === i, go: () => { mode = i; pfi = i === 0 ? 7 : 3; } }));
+  if (mode === 0) {
+    TOPICS.forEach((n, i) => t.push({ x: px + 10 + i * 58, y: 68, w: 55, h: 24, lbl: n, size: 10, on: topic === i, go: () => { topic = i; newQ(); } }));
+    qz.opts.forEach((o, i) => t.push({ x: px + 10 + (i % 2) * 120, y: 140 + floor(i / 2) * 54, w: 114, h: 46, lbl: o, size: 17, go: () => answer(i) }));
+  } else academy.forEach((u, i) => t.push({ x: px + 10, y: 74 + i * 72, w: 230, h: 64, size: 10, col: u.col, lbl: '[' + (i + 1) + '] ' + u.name + '\n' + u.cost + ' CR   +' + u.cps + ' CPS\nOWNED ' + u.count, go: () => buy(i, academy) }));
+  return t;
+}
+function drawPanel() {
+  const px = V - 250 * panelP, cx = px + 125;
+  noStroke(); fill(5, 2, 18, 245); rect(px, 0, 250, V); stroke(acc()); strokeWeight(2); line(px, 0, px, V);
+  noStroke(); textAlign(LEFT, CENTER); fill(255); textSize(13); text('ACADEMY', px + 12, 19);
+  fill(80, 255, 160); textSize(8); text(degree().toUpperCase(), px + 88, 19);
+  targets().forEach((t, i) => {
+    const c = t.col || T;
+    stroke(c[0], c[1], c[2], 200); strokeWeight(t.on ? 3 : 1.5); fill(c[0], c[1], c[2], t.on ? 70 : 20); rect(t.x, t.y, t.w, t.h, 3);
+    if (padActive && i === pfi) { stroke(255); strokeWeight(3); noFill(); rect(t.x - 3, t.y - 3, t.w + 6, t.h + 6, 5); }
+    noStroke(); fill(255); textAlign(CENTER, CENTER); textSize(t.size || 11); text(t.lbl, t.x + t.w / 2, t.y + t.h / 2);
+  });
+  textAlign(CENTER, CENTER); noStroke();
+  if (mode === 0) {
+    fill(207, 233, 255); textSize(20); text(qz.q + ' = ?', cx, 114);
+    fill(207, 233, 255, 170); textSize(8); text('TIP: ' + TIPS[topic], cx, 258);
+    fill(fb[1][0], fb[1][1], fb[1][2]); textSize(10); text(fb[0], cx, 278);
+    fill(255, 215, 0); textSize(9); text('STREAK ' + streak + '   SOLVED ' + solved, cx, 298);
+  } else { fill(207, 233, 255, 170); textSize(8); text('COURSES TEACH YOU PASSIVE CR', cx, 67); }
+  if (padActive) { fill(207, 233, 255, 150); textSize(8); text('A SELECT  B CLOSE  LB/RB TABS', cx, 382); }
+}
+function nearest(t, i, dx, dy) {
+  const c = r => [r.x + r.w / 2, r.y + r.h / 2], [fx, fy] = c(t[i]); let best = i, bs = 1e9;
+  t.forEach((r, j) => { if (j === i) return; const [x, y] = c(r), a = (x - fx) * dx + (y - fy) * dy, p = abs((x - fx) * dy - (y - fy) * dx); if (a > 1 && a + 2 * p < bs) { bs = a + 2 * p; best = j; } });
+  return best;
+}
+function pad() {
+  const gp = (navigator.getGamepads ? [...navigator.getGamepads()] : []).find(g => g && g.connected); if (!gp) return;
+  const b = i => !!(gp.buttons[i] && gp.buttons[i].pressed), edge = i => { const n = b(i), o = padPrev[i]; padPrev[i] = n; return n && !o; };
+  let dx = (b(15) ? 1 : 0) - (b(14) ? 1 : 0), dy = (b(13) ? 1 : 0) - (b(12) ? 1 : 0);
+  const ax = gp.axes[0] || 0, ay = gp.axes[1] || 0;
+  if (!dx && !dy) { if (abs(ax) > 0.6 && abs(ax) >= abs(ay)) dx = ax > 0 ? 1 : -1; else if (abs(ay) > 0.6) dy = ay > 0 ? 1 : -1; }
+  const dir = dx || dy ? dx + ',' + dy : '', dEdge = dir && dir !== padPrev.dir; padPrev.dir = dir;
+  const A = edge(0), B = edge(1), X = edge(2), Y = edge(3), LB = edge(4), RB = edge(5), ST = edge(9);
+  if (A || B || X || Y || LB || RB || ST || dEdge) padActive = true; else return;
+  if (scene !== 'PLAY') { if (A || ST) press(200, 165); return; }
+  if (drawer) {
+    const t = targets(); if (pfi >= t.length) pfi = 0;
+    if (B || Y) drawer = false;
+    else if (LB || RB) { mode = RB ? 1 : 0; pfi = mode === 0 ? 7 : 3; }
+    else if (dEdge) pfi = nearest(t, pfi, dx, dy);
+    else if (A) t[pfi].go();
+  } else {
+    if (A) mine(200, 165);
+    if (Y) toggleDrawer();
+    if (dEdge && dx) fi = (fi + dx + 3) % 3;
+    if (X) buy(fi);
+  }
+}
 const DEG = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate'], DEGAT = [0, 5, 12, 25, 40];
 const degree = () => { const n = academy.reduce((a, u) => a + u.count, 0); let d = 0; DEGAT.forEach((t, i) => { if (n >= t) d = i; }); return DEG[d] + ' (' + n + ' courses)'; };
 let shop = mk(), cr = 0, clicks = 0, playMs = 0, scene = 'MENU', sceneAt = 0;
@@ -108,13 +189,13 @@ async function unseal(str, pass) {
 function cap(x, y, on) {
   push(); translate(x, y); stroke(on ? color(255) : acc(170)); strokeWeight(2);
   fill(on ? color(T[0], T[1], T[2], 90) : color(10, 5, 30)); rect(-22, -18, 44, 36, 4);
-  fill(on ? color(80, 255, 160) : acc(60)); arc(0, 5, 16, 10, 0, PI); quad(0, -10, 17, -3, 0, 4, -17, -3);
-  line(17, -3, 17, 8); fill(255, 215, 0); noStroke(); ellipse(17, 9, 4, 4); pop();
+  noFill(); quad(0, -9, 15, -2, 0, 5, -15, -2); line(15, -2, 15, 8);
+  pop();
 }
 function setup() {
   cv = createCanvas(V, V); cv.parent('stage');
   frameRate(60); textFont('Orbitron, Courier New, monospace');
-  load(); fit();
+  load(); fit(); newQ();
   const $ = id => document.getElementById(id), pw = () => $('pass').value;
   const make = async () => { if (!pw()) { say('Enter a passphrase first.'); return null; } try { return await seal(snapshot(), pw()); } catch (e) { say('Encryption needs a secure (https) page.'); return null; } };
   $('exp').onclick = async () => { const t = await make(); if (t) { $('code').value = t; say('Encrypted. Copy the string to move your save.'); } };
@@ -136,7 +217,7 @@ function windowResized() { fit(); }
 const vx = () => mouseX / s, vy = () => mouseY / s;
 
 function draw() {
-  const dt = deltaTime;
+  pad(); const dt = deltaTime;
   if (scene === 'PLAY') {
     cr += cps() * dt / 1000; playMs += dt;
     nextGlitch -= dt;
@@ -151,6 +232,8 @@ function draw() {
   translate(random(-shake, shake), random(-shake, shake));
   grid();
   if (scene === 'MENU') menu(); else if (scene === 'PLAY') play(); else over();
+  if (scene !== 'PLAY') drawer = false;
+  panelP = lerp(panelP, drawer ? 1 : 0, 0.18); if (panelP > 0.01) drawPanel();
   parts = parts.filter(p => p.life > 0); parts.forEach(p => { p.update(); p.draw(); });
   pop();
   const f = max(0, 1 - (millis() - sceneAt) / 400);
@@ -179,6 +262,7 @@ function menu() {
   core(200, 215, 45);
   fill(207, 233, 255); textSize(11); text('OBJECTIVE: REACH ' + GOAL.toLocaleString() + ' CR', 200, 300);
   text('CLICK OR [SPACE] TO MINE  /  [1] [2] [3] TO BUY', 200, 322);
+  textSize(9); text('GAMEPAD: A MINE  X BUY  Y ACADEMY  D-PAD MOVE', 200, 342); textSize(11);
   fill(T[0], T[1], T[2], 140 + sin(frameCount * 0.1) * 100); textSize(14);
   text(cr > 0 ? 'CLICK TO RESUME RUN' : 'CLICK OR PRESS SPACE TO ENTER', 200, 365);
 }
@@ -189,8 +273,8 @@ function play() {
   noStroke(); fill(acc()); rect(12, 46, (V - 24) * min(1, cr / GOAL), 8);
   core(200, 165, 62);
   textAlign(CENTER, CENTER); fill(207, 233, 255, 160); textSize(10); text('TAP THE CORE', 200, 262);
-  cap(365, 77, tab); fill(tab ? color(80, 255, 160) : color(207, 233, 255, 170)); textSize(10);
-  text(tab ? 'ACADEMY: ' + degree().toUpperCase() : 'TERMINAL SHOP  [L] ACADEMY', 200, 279);
+  cap(365, 77, drawer); fill(tab ? color(80, 255, 160) : color(207, 233, 255, 170)); textSize(10);
+  text('TERMINAL SHOP', 200, 279);
   if (glitch) {
     const gy = glitch.yy ?? glitch.y; push(); translate(glitch.x, gy); rotate(glitch.ph * 0.5);
     stroke(255, 215, 0); strokeWeight(2); fill(255, 215, 0, 80 + random(120)); rectMode(CENTER); rect(random(-1, 1), random(-1, 1), 26, 26); pop();
@@ -206,6 +290,7 @@ function play() {
     textSize(10); text('+' + u.cps + ' CPS', 0, 14); text('OWNED ' + u.count, 0, 32);
     pop();
   });
+  if (padActive && !drawer) { noFill(); stroke(255); strokeWeight(3); rect(7 + fi * 130, SHOP_Y - 3, 126, 98, 6); }
 }
 function over() {
   textAlign(CENTER, CENTER); noStroke(); fill(acc()); textSize(30); text('RUN COMPLETE', 200, 80);
@@ -222,15 +307,16 @@ function mine(x, y) {
   cr += 1; clicks++; coreS = 0.88; shake = 6;
   floatText('+1', x + random(-12, 12), y - 10); burst(x, y, 8);
 }
-function buy(i) {
-  const u = list()[i];
-  if (u.canBuy(cr)) { cr -= u.cost; u.buy(); btnS[i] = 1.12; shake = 3; floatText(tab ? 'LEARNED' : 'LOADED', 65 + i * 130, SHOP_Y - 6, u.col); save(); }
-  else { floatText('LOCKED', 65 + i * 130, SHOP_Y - 6, [255, 60, 90]); btnS[i] = 0.92; }
+function buy(i, arr = shop) {
+  const u = arr[i], ac = arr === academy, bx = ac ? V - 125 : 65 + i * 130, by = ac ? 74 + i * 72 : SHOP_Y - 6;
+  if (u.canBuy(cr)) { cr -= u.cost; u.buy(); if (!ac) btnS[i] = 1.12; shake = 3; floatText(ac ? 'LEARNED' : 'LOADED', bx, by, u.col); save(); }
+  else { floatText('LOCKED', bx, by, [255, 60, 90]); if (!ac) btnS[i] = 0.92; }
 }
-function reset() { shop = mk(); academy = mkA(); tab = false; cr = 0; clicks = 0; playMs = 0; glitch = null; parts = []; save(); go('MENU'); }
+function reset() { shop = mk(); academy = mkA(); drawer = false; cr = 0; clicks = 0; playMs = 0; glitch = null; parts = []; save(); go('MENU'); }
 function press(x, y) {
   if (scene === 'MENU') { go('PLAY'); return; }
   if (scene === 'GAMEOVER') { if (millis() - sceneAt > 700) reset(); return; }
+  if (drawer) { const h = targets().find(t => x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h); if (h) h.go(); else if (x < V - 250) drawer = false; return; }
   if (glitch) {
     const gy = glitch.yy ?? glitch.y;
     if (abs(x - glitch.x) < 22 && abs(y - gy) < 22) {
@@ -238,19 +324,26 @@ function press(x, y) {
       burst(glitch.x, gy, 40, [255, 215, 0]); floatText('+' + fmt(bounty), glitch.x, gy - 10, [255, 215, 0]); glitch = null; return;
     }
   }
-  if (x > 343 && x < 387 && y > 58 && y < 96) { tab = !tab; floatText(tab ? 'ACADEMY' : 'SHOP', 365, 54, [80, 255, 160]); return; }
+  if (x > 343 && x < 387 && y > 58 && y < 96) { toggleDrawer(); return; }
   if (y >= SHOP_Y) { for (let i = 0; i < 3; i++) if (x >= 10 + i * 130 && x <= 130 + i * 130 && y <= SHOP_Y + 92) buy(i); }
   else mine(x, y);
 }
 function mousePressed(e) { if (!e || e.target !== cv.elt) return; press(vx(), vy()); return false; }
-function touchStarted() { return false; }
+function touchStarted(e) {
+  if (!e || e.target !== cv.elt) return;
+  const t = touches[0]; if (t) press(t.x / s, t.y / s);
+  return false;
+}
 function keyPressed() {
   if (document.activeElement && document.activeElement.tagName === 'INPUT' && document.activeElement.type === 'text') return;
   if (key === ' ') { scene === 'PLAY' ? mine(200, 165) : press(200, 165); return false; }
-  if (scene === 'PLAY' && (key === 'l' || key === 'L')) tab = !tab;
+  if (scene === 'PLAY' && (key === 'l' || key === 'L')) { toggleDrawer(); return; }
+  if (scene === 'PLAY' && drawer) { if (key === 'Escape') drawer = false; else if (mode === 1 && '123'.includes(key)) buy(+key - 1, academy); else if (mode === 0 && '1234'.includes(key)) answer(+key - 1); return; }
   if (scene === 'PLAY' && '123'.includes(key)) buy(+key - 1);
   if (key === ' ' || key.startsWith('Arrow')) return false;
 }
+window.addEventListener('pointerdown', () => { padActive = false; });
+window.addEventListener('keydown', () => { padActive = false; });
 window.addEventListener('keydown', e => { if (e.code === 'Space' && e.target.tagName !== 'INPUT') e.preventDefault(); });
 window.addEventListener('beforeunload', () => { try { localStorage.setItem(KEY, JSON.stringify(snapshot())); } catch (e) {} });
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
