@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CyberClicker Arcade</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#05020d"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-192.png">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;800&display=swap" rel="stylesheet">
+<style>
+:root{--acc:#00f0ff;--bg:#05020d;--ink:#cfe9ff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Orbitron,"Courier New",monospace}
+body{display:flex;flex-direction:column;align-items:center;min-height:100%}
+#stage{line-height:0;border:1px solid var(--acc);box-shadow:0 0 24px var(--acc)}
+#dock{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;padding:10px;max-width:760px;font-size:12px}
+#dock button,#dock input[type=text],#dock input[type=password]{background:#0b0620;color:var(--ink);border:1px solid var(--acc);padding:7px 10px;font:inherit;border-radius:2px}
+#dock button{cursor:pointer}#dock button:hover,#dock button:focus-visible{background:var(--acc);color:#000;outline:none}
+#dock input[type=color]{width:34px;height:30px;border:1px solid var(--acc);background:none;padding:0}
+#dock input[type=text],#dock input[type=password]{width:150px}#dock input[type=file]{max-width:180px;font:inherit;font-size:11px}#msg{width:100%;text-align:center;min-height:1.2em;color:var(--acc)}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+</head>
+<body>
+<div id="stage"></div>
+<div id="dock">
+  <input type="password" id="pass" placeholder="Passphrase" aria-label="Save passphrase" autocomplete="off">
+  <button id="exp">Encrypt</button>
+  <button id="dl">Save file</button>
+  <input type="text" id="code" placeholder="Encrypted save string" aria-label="Encrypted save string">
+  <button id="imp">Decrypt &amp; import</button>
+  <input type="file" id="file" accept=".ccsave,.txt" aria-label="Load save file">
+  <label>Theme <input type="color" id="theme" value="#00f0ff"></label>
+  <div id="msg"></div>
+</div>
+<script>
+const V = 400, GOAL = 50000, KEY = 'cyberclicker_save', SHOP_Y = 292;
+class Upgrade {
+  constructor(name, base, cps, col, mult = 1.32) { this.mult = mult; this.name = name; this.base = base; this.cps = cps; this.col = col; this.cost = base; this.count = 0; }
+  canBuy(cr) { return cr >= this.cost; }
+  buy() { this.count++; this.cost = Math.floor(this.cost * this.mult); }
+  get output() { return this.count * this.cps; }
+}
+const mk = () => [new Upgrade('Nano Node', 15, 0.2, [0, 150, 255]), new Upgrade('AI Driver', 120, 3.0, [190, 70, 255]), new Upgrade('Core Core', 1000, 45.0, [255, 200, 30])];
+const mkA = () => [new Upgrade('Flashcards', 5, 0.1, [80, 255, 160], 1.15), new Upgrade('Textbook', 25, 0.6, [255, 120, 200], 1.18), new Upgrade('Tutor Bot', 90, 2.0, [255, 255, 255], 1.2)];
+let academy = mkA(), tab = false;
+const list = () => tab ? academy : shop;
+const DEG = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate'], DEGAT = [0, 5, 12, 25, 40];
+const degree = () => { const n = academy.reduce((a, u) => a + u.count, 0); let d = 0; DEGAT.forEach((t, i) => { if (n >= t) d = i; }); return DEG[d] + ' (' + n + ' courses)'; };
+let shop = mk(), cr = 0, clicks = 0, playMs = 0, scene = 'MENU', sceneAt = 0;
+let parts = [], shake = 0, coreS = 1, glitch = null, nextGlitch = 12000, lastSave = 0, T = [0, 240, 255], s = 1, cv, btnS = [1, 1, 1];
+
+const cps = () => shop.concat(academy).reduce((a, u) => a + u.output, 0);
+const acc = (a = 255) => color(T[0], T[1], T[2], a);
+const fmt = n => n >= 1e4 ? (n / 1e3).toFixed(1) + 'k' : n.toFixed(n < 100 ? 1 : 0);
+const say = t => { document.getElementById('msg').textContent = t; };
+function go(n) { scene = n; sceneAt = millis(); }
+
+function snapshot() { return { cr, clicks, playMs, owned: shop.map(u => u.count), costs: shop.map(u => u.cost), learn: academy.map(u => u.count), learnCosts: academy.map(u => u.cost) }; }
+function save() { try { localStorage.setItem(KEY, JSON.stringify(snapshot())); } catch (e) {} lastSave = millis(); }
+function apply(d) {
+  const ok = d && [d.cr, d.clicks, d.playMs].every(x => Number.isFinite(x) && x >= 0) &&
+    Array.isArray(d.owned) && Array.isArray(d.costs) && d.owned.length === 3 && d.costs.length === 3 &&
+    d.owned.every(x => Number.isInteger(x) && x >= 0) && d.costs.every((c, i) => Number.isFinite(c) && c >= shop[i].base);
+  if (!ok) return false;
+  const L = Array.isArray(d.learn) && d.learn.length === 3 && d.learn.every(x => Number.isInteger(x) && x >= 0) && Array.isArray(d.learnCosts) && d.learnCosts.length === 3 && d.learnCosts.every((c, i) => Number.isFinite(c) && c >= academy[i].base);
+  if (d.learn !== undefined && !L) return false;
+  academy = mkA(); if (L) academy.forEach((u, i) => { u.count = d.learn[i]; u.cost = d.learnCosts[i]; });
+  cr = d.cr; clicks = d.clicks; playMs = d.playMs;
+  shop.forEach((u, i) => { u.count = d.owned[i]; u.cost = d.costs[i]; });
+  return true;
+}
+function load() { try { const r = localStorage.getItem(KEY); if (r) apply(JSON.parse(r)); } catch (e) {} }
+
+class Particle {
+  constructor(o) { Object.assign(this, { x: 0, y: 0, vx: 0, vy: 0, g: 0, rot: 0, vr: 0, life: 1, decay: 0.02, size: 6, txt: null, col: T }, o); }
+  update() { this.x += this.vx; this.y += this.vy; this.vy += this.g; this.rot += this.vr; this.life -= this.decay; }
+  draw() {
+    const a = max(0, this.life) * 255;
+    push(); translate(this.x, this.y);
+    if (this.txt) { noStroke(); fill(this.col[0], this.col[1], this.col[2], a); textAlign(CENTER, CENTER); textSize(14); text(this.txt, 0, 0); }
+    else { rotate(this.rot); noStroke(); fill(this.col[0], this.col[1], this.col[2], a); rectMode(CENTER); rect(0, 0, this.size, this.size); }
+    pop();
+  }
+}
+const floatText = (t, x, y, col = T) => parts.push(new Particle({ x, y, vy: -1.2, decay: 0.02, txt: t, col }));
+function burst(x, y, n, col = T) {
+  for (let i = 0; i < n; i++) {
+    const a = random(TWO_PI), sp = random(1.5, 6);
+    parts.push(new Particle({ x, y, vx: cos(a) * sp, vy: sin(a) * sp - 2, g: 0.18, rot: random(TWO_PI), vr: random(-0.3, 0.3), size: random(3, 8), decay: random(0.012, 0.03), col }));
+  }
+}
+
+const te = new TextEncoder(), b64 = u => btoa(String.fromCharCode(...u)), unb64 = t => Uint8Array.from(atob(t), c => c.charCodeAt(0));
+async function keyFor(pass, salt) {
+  const m = await crypto.subtle.importKey('raw', te.encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 150000, hash: 'SHA-256' }, m, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+async function seal(obj, pass) {
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await keyFor(pass, salt), te.encode(JSON.stringify(obj))));
+  const out = new Uint8Array(28 + ct.length); out.set(salt, 0); out.set(iv, 16); out.set(ct, 28);
+  return 'CC1.' + b64(out);
+}
+async function unseal(str, pass) {
+  const raw = unb64(str.trim().replace(/^CC1\./, ''));
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: raw.slice(16, 28) }, await keyFor(pass, raw.slice(0, 16)), raw.slice(28));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+function cap(x, y, on) {
+  push(); translate(x, y); stroke(on ? color(255) : acc(170)); strokeWeight(2);
+  fill(on ? color(T[0], T[1], T[2], 90) : color(10, 5, 30)); rect(-22, -18, 44, 36, 4);
+  fill(on ? color(80, 255, 160) : acc(60)); arc(0, 5, 16, 10, 0, PI); quad(0, -10, 17, -3, 0, 4, -17, -3);
+  line(17, -3, 17, 8); fill(255, 215, 0); noStroke(); ellipse(17, 9, 4, 4); pop();
+}
+function setup() {
+  cv = createCanvas(V, V); cv.parent('stage');
+  frameRate(60); textFont('Orbitron, Courier New, monospace');
+  load(); fit();
+  const $ = id => document.getElementById(id), pw = () => $('pass').value;
+  const make = async () => { if (!pw()) { say('Enter a passphrase first.'); return null; } try { return await seal(snapshot(), pw()); } catch (e) { say('Encryption needs a secure (https) page.'); return null; } };
+  $('exp').onclick = async () => { const t = await make(); if (t) { $('code').value = t; say('Encrypted. Copy the string to move your save.'); } };
+  $('dl').onclick = async () => { const t = await make(); if (!t) return; const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([t], { type: 'text/plain' })); a.download = 'cyberclicker.ccsave'; a.click(); say('Save file created.'); };
+  const imp = async str => { if (!pw()) return say('Enter the passphrase first.'); try { const d = await unseal(str, pw()); if (apply(d)) { save(); say('Save imported.'); } else say('Rejected: save data is corrupted.'); } catch (e) { say('Wrong passphrase or damaged save.'); } };
+  $('imp').onclick = () => imp($('code').value);
+  $('file').onchange = async e => { const f = e.target.files[0]; if (f) imp(await f.text()); e.target.value = ''; };
+  document.getElementById('theme').oninput = e => {
+    const h = e.target.value; T = [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+    document.documentElement.style.setProperty('--acc', h);
+  };
+}
+function fit() {
+  const dock = document.getElementById('dock').offsetHeight || 110;
+  const sz = floor(max(280, min(windowWidth - 4, windowHeight - dock - 10, 760)));
+  resizeCanvas(sz, sz); s = sz / V;
+}
+function windowResized() { fit(); }
+const vx = () => mouseX / s, vy = () => mouseY / s;
+
+function draw() {
+  const dt = deltaTime;
+  if (scene === 'PLAY') {
+    cr += cps() * dt / 1000; playMs += dt;
+    nextGlitch -= dt;
+    if (!glitch && nextGlitch <= 0) { const l = random() < 0.5; glitch = { x: l ? -30 : V + 30, y: random(70, 250), dir: l ? 1 : -1, ph: random(TWO_PI) }; nextGlitch = random(12000, 25000); }
+    if (glitch) { glitch.x += glitch.dir * 2.4; glitch.ph += 0.15; glitch.yy = glitch.y + sin(glitch.ph) * 30; if (glitch.x < -40 || glitch.x > V + 40) glitch = null; }
+    if (millis() - lastSave > 5000) save();
+    if (cr >= GOAL) { cr = GOAL; save(); go('GAMEOVER'); }
+  }
+  shake = lerp(shake, 0, 0.12);
+  background(5, 2, 13);
+  push(); scale(s);
+  translate(random(-shake, shake), random(-shake, shake));
+  grid();
+  if (scene === 'MENU') menu(); else if (scene === 'PLAY') play(); else over();
+  parts = parts.filter(p => p.life > 0); parts.forEach(p => { p.update(); p.draw(); });
+  pop();
+  const f = max(0, 1 - (millis() - sceneAt) / 400);
+  if (f > 0) { noStroke(); fill(0, f * 255); rect(0, 0, width, height); }
+  stroke(255, 12); for (let y = 0; y < height; y += 4) line(0, y, width, y);
+}
+
+function grid() {
+  stroke(T[0], T[1], T[2], 40); strokeWeight(1);
+  const o = (frameCount * 0.4) % 20;
+  for (let x = 0; x <= V; x += 20) line(x, 0, x, V);
+  for (let y = -20; y <= V; y += 20) line(0, y + o, V, y + o);
+}
+function core(cx, cy, r) {
+  const pulse = 1 + sin(frameCount * 0.06) * 0.03; coreS = lerp(coreS, 1, 0.15);
+  push(); translate(cx, cy); scale(coreS * pulse);
+  noFill(); for (let i = 3; i > 0; i--) { stroke(T[0], T[1], T[2], 40 * i); strokeWeight(i * 4); ellipse(0, 0, r * 2); }
+  stroke(acc()); strokeWeight(2); fill(10, 5, 30); ellipse(0, 0, r * 2);
+  rotate(frameCount * 0.01); noFill(); rect(-r * 0.55, -r * 0.55, r * 1.1, r * 1.1);
+  rotate(-frameCount * 0.025); rect(-r * 0.4, -r * 0.4, r * 0.8, r * 0.8);
+  pop();
+}
+function menu() {
+  textAlign(CENTER, CENTER); noStroke(); fill(acc()); textSize(34); text('CYBERCLICKER', 200, 90);
+  fill(255, 60, 200); textSize(16); text('A R C A D E', 200, 125);
+  core(200, 215, 45);
+  fill(207, 233, 255); textSize(11); text('OBJECTIVE: REACH ' + GOAL.toLocaleString() + ' CR', 200, 300);
+  text('CLICK OR [SPACE] TO MINE  /  [1] [2] [3] TO BUY', 200, 322);
+  fill(T[0], T[1], T[2], 140 + sin(frameCount * 0.1) * 100); textSize(14);
+  text(cr > 0 ? 'CLICK TO RESUME RUN' : 'CLICK OR PRESS SPACE TO ENTER', 200, 365);
+}
+function play() {
+  textAlign(LEFT, CENTER); noStroke(); fill(255); textSize(22); text(fmt(cr) + ' CR', 12, 24);
+  textAlign(RIGHT, CENTER); fill(acc()); textSize(13); text(cps().toFixed(1) + ' CPS', V - 12, 24);
+  noFill(); stroke(T[0], T[1], T[2], 120); rect(12, 46, V - 24, 8);
+  noStroke(); fill(acc()); rect(12, 46, (V - 24) * min(1, cr / GOAL), 8);
+  core(200, 165, 62);
+  textAlign(CENTER, CENTER); fill(207, 233, 255, 160); textSize(10); text('TAP THE CORE', 200, 262);
+  cap(365, 77, tab); fill(tab ? color(80, 255, 160) : color(207, 233, 255, 170)); textSize(10);
+  text(tab ? 'ACADEMY: ' + degree().toUpperCase() : 'TERMINAL SHOP  [L] ACADEMY', 200, 279);
+  if (glitch) {
+    const gy = glitch.yy ?? glitch.y; push(); translate(glitch.x, gy); rotate(glitch.ph * 0.5);
+    stroke(255, 215, 0); strokeWeight(2); fill(255, 215, 0, 80 + random(120)); rectMode(CENTER); rect(random(-1, 1), random(-1, 1), 26, 26); pop();
+  }
+  list().forEach((u, i) => {
+    const x = 10 + i * 130, y = SHOP_Y, ok = u.canBuy(cr);
+    btnS[i] = lerp(btnS[i], 1, 0.2);
+    push(); translate(x + 60, y + 46); scale(btnS[i]);
+    stroke(u.col[0], u.col[1], u.col[2], ok ? 255 : 90); strokeWeight(2); fill(u.col[0], u.col[1], u.col[2], ok ? 45 : 10); rect(-60, -46, 120, 92, 4);
+    noStroke(); fill(u.col[0], u.col[1], u.col[2], ok ? 255 : 120); textAlign(CENTER, CENTER);
+    textSize(11); text('[' + (i + 1) + '] ' + u.name, 0, -30);
+    fill(255, ok ? 255 : 120); textSize(15); text(u.cost + ' CR', 0, -6);
+    textSize(10); text('+' + u.cps + ' CPS', 0, 14); text('OWNED ' + u.count, 0, 32);
+    pop();
+  });
+}
+function over() {
+  textAlign(CENTER, CENTER); noStroke(); fill(acc()); textSize(30); text('RUN COMPLETE', 200, 80);
+  core(200, 180, 40);
+  fill(207, 233, 255); textSize(13);
+  const sec = floor(playMs / 1000);
+  text('TIME ELAPSED  ' + floor(sec / 60) + 'm ' + (sec % 60) + 's', 200, 260);
+  text('RUNTIME CLICKS  ' + clicks, 200, 285);
+  text('FINAL CPS  ' + cps().toFixed(1), 200, 310);
+  fill(T[0], T[1], T[2], 140 + sin(frameCount * 0.1) * 100); text('CLICK OR [SPACE] TO RETURN TO HUB', 200, 360);
+}
+
+function mine(x, y) {
+  cr += 1; clicks++; coreS = 0.88; shake = 6;
+  floatText('+1', x + random(-12, 12), y - 10); burst(x, y, 8);
+}
+function buy(i) {
+  const u = list()[i];
+  if (u.canBuy(cr)) { cr -= u.cost; u.buy(); btnS[i] = 1.12; shake = 3; floatText(tab ? 'LEARNED' : 'LOADED', 65 + i * 130, SHOP_Y - 6, u.col); save(); }
+  else { floatText('LOCKED', 65 + i * 130, SHOP_Y - 6, [255, 60, 90]); btnS[i] = 0.92; }
+}
+function reset() { shop = mk(); academy = mkA(); tab = false; cr = 0; clicks = 0; playMs = 0; glitch = null; parts = []; save(); go('MENU'); }
+function press(x, y) {
+  if (scene === 'MENU') { go('PLAY'); return; }
+  if (scene === 'GAMEOVER') { if (millis() - sceneAt > 700) reset(); return; }
+  if (glitch) {
+    const gy = glitch.yy ?? glitch.y;
+    if (abs(x - glitch.x) < 22 && abs(y - gy) < 22) {
+      const bounty = max(cps(), 1) * 25; cr += bounty; shake = 14;
+      burst(glitch.x, gy, 40, [255, 215, 0]); floatText('+' + fmt(bounty), glitch.x, gy - 10, [255, 215, 0]); glitch = null; return;
+    }
+  }
+  if (x > 343 && x < 387 && y > 58 && y < 96) { tab = !tab; floatText(tab ? 'ACADEMY' : 'SHOP', 365, 54, [80, 255, 160]); return; }
+  if (y >= SHOP_Y) { for (let i = 0; i < 3; i++) if (x >= 10 + i * 130 && x <= 130 + i * 130 && y <= SHOP_Y + 92) buy(i); }
+  else mine(x, y);
+}
+function mousePressed(e) { if (!e || e.target !== cv.elt) return; press(vx(), vy()); return false; }
+function touchStarted() { return false; }
+function keyPressed() {
+  if (document.activeElement && document.activeElement.tagName === 'INPUT' && document.activeElement.type === 'text') return;
+  if (key === ' ') { scene === 'PLAY' ? mine(200, 165) : press(200, 165); return false; }
+  if (scene === 'PLAY' && (key === 'l' || key === 'L')) tab = !tab;
+  if (scene === 'PLAY' && '123'.includes(key)) buy(+key - 1);
+  if (key === ' ' || key.startsWith('Arrow')) return false;
+}
+window.addEventListener('keydown', e => { if (e.code === 'Space' && e.target.tagName !== 'INPUT') e.preventDefault(); });
+window.addEventListener('beforeunload', () => { try { localStorage.setItem(KEY, JSON.stringify(snapshot())); } catch (e) {} });
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
